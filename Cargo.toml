@@ -8,7 +8,28 @@ edition = "2021"
 [dependencies.tui]
 version = "0.19.0"
 features = ["crossterm"]
+
 [dependencies.crossterm]
+features = ["event-stream"]
 version = "0.25"
+
 [dependencies.unicode-width]
 version = "*"
+
+[dependencies.bilive-danmaku]
+git = "https://github.com/4t145/bilive-danmaku"
+branch = "master"
+
+[dependencies.bilibili-client]
+git = "https://github.com/4t145/bilibili-client"
+branch = "master"
+
+[dependencies.tokio]
+version = "1.20.1"
+features = ["full"]
+
+[dependencies]
+futures = "0.3"
+futures-timer = "3.0"
+async-std = "1.10"
+serde_json = "1.0"
