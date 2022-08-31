@@ -1,4 +1,4 @@
-use std::{collections::HashMap, pin::Pin};
+use std::{collections::HashMap, pin::Pin, fmt::Display};
 use tokio::sync::{watch, RwLockReadGuard};
 use tui::widgets::Widget;
 
@@ -21,7 +21,50 @@ impl Page {
 pub struct GlobalState {
     pub pages: Vec<(String, watch::Receiver<Page>)>,
     pub current_page: Option<usize>,
-    pub messages: Vec<String>
+    pub messages: Vec<String>,
+    pub input_state: InputState
+}
+
+#[derive(Clone)]
+pub enum Action {
+    CreatLiveRoomPage
+}
+
+impl Display for Action {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Action::CreatLiveRoomPage => {
+                f.write_str("创建房间")
+            },
+        }
+    }
+}
+
+#[derive(Clone)]
+pub enum InputState {
+    EditAction {
+        action: Action,
+        display: String,
+        buffer: String,
+    },
+    Normal,
+}
+
+impl InputState {
+    pub fn edit_action(action: Action) -> Self {
+        Self::EditAction {
+            action,
+            display: String::new(),
+            buffer: String::new()
+        }
+    }
+}
+
+
+impl Default for InputState {
+    fn default() -> Self {
+        Self::Normal
+    }
 }
 
 impl GlobalState {
@@ -88,7 +131,8 @@ impl Default for GlobalState {
         Self {
             current_page: None,
             pages: Vec::new(),
-            messages: Vec::new()
+            messages: Vec::new(),
+            input_state: InputState::default()
         }
     }
 }

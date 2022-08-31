@@ -26,6 +26,7 @@ enum InputMode {
     Normal,
     Editing,
 }
+
 /// App holds the state of the application
 struct App {
     state: GlobalState,
@@ -39,6 +40,7 @@ impl App {
     fn tabs(&self) -> Tabs {
         let titles = self.state.pages.iter().map(|p|Spans::from(p.0.clone())).collect();
         let tabs = Tabs::new(titles)
+            .select(self.state.current_page.unwrap_or(0))
             .block(Block::default().title("Tabs").borders(Borders::ALL))
             .style(Style::default().fg(Color::White))
             .highlight_style(Style::default().fg(Color::Yellow))
@@ -62,7 +64,11 @@ impl App {
 
     fn render_message<B:Backend>(&self, f: &mut Frame<B>, area: Rect) {
         let msg = self.state.messages.last().map(|x|x.as_str()).unwrap_or_default();
-        let text = Paragraph::new(msg);
+        self.render_single_line_input(f, area, msg);
+    }
+
+    fn render_single_line_input<'a, B:Backend>(&self, f: &mut Frame<B>, area: Rect, text: impl Into<Text<'a>>) {
+        let text = Paragraph::new(text.into());
         f.render_widget(text, area)
     }
 }
@@ -85,10 +91,18 @@ fn render<B:Backend>(f: &mut Frame<B>, app: &App) {
 
     f.render_widget(tabs, chunks[0]);
     app.render_page(f, chunks[1]);
-    app.render_message(f, chunks[2])
+    match &app.state.input_state {
+        page::InputState::EditAction { action, display:_, buffer } => {
+            let display = format!("[{action}]roomid:{buffer}");
+            app.render_single_line_input(f, chunks[2], display);
+        },
+        page::InputState::Normal => {
+            app.render_message(f, chunks[2]);
+        },
+    }
 }
 
-
+// 此处逻辑需要拆分
 async fn run<B:Backend>(app: &mut App, terminal: &mut Terminal<B>) -> Result<(), io::Error> {
     let mut reader = event::EventStream::new();
     terminal.draw(|f|render(f, &app))?;
@@ -106,19 +120,14 @@ async fn run<B:Backend>(app: &mut App, terminal: &mut Terminal<B>) -> Result<(),
                                 use KeyCode::*;
                                 use event::KeyEventKind::*;
                                 use event::KeyModifiers;
+                                use page::Action;
                                 match (key_evt.code, key_evt.kind, key_evt.modifiers) {
                                     (Char('c'), Press, KeyModifiers::CONTROL) => {
                                         return Ok(())
                                     }
                                     (Char('l'), Press, KeyModifiers::CONTROL) => {
-                                        if app.state.current_page.is_none() {
-                                            // creat live page
-                                            let srv = LiveRoomService::new(851181).await.unwrap();
-                                            let watcher = srv.watch().await;
-                                            tokio::spawn(srv.serve());
-                                            app.state.regist_page("851181".to_string(), watcher);
-                                            terminal.draw(|f|render(f, &app))?;
-                                        }
+                                        app.state.input_state = page::InputState::edit_action(Action::CreatLiveRoomPage);
+                                        terminal.draw(|f|render(f, &app))?;
                                     }
                                     (PageUp|Char(','), Press, KeyModifiers::CONTROL) => {
                                         app.state.to_next_page();
@@ -126,6 +135,54 @@ async fn run<B:Backend>(app: &mut App, terminal: &mut Terminal<B>) -> Result<(),
                                     }
                                     (PageDown|Char('.'), Press, KeyModifiers::CONTROL) => {
                                         app.state.to_prev_page();
+                                        terminal.draw(|f|render(f, &app))?;
+                                    }
+                                    (Char(c), Press, KeyModifiers::NONE) => {
+                                        match &mut app.state.input_state {
+                                            page::InputState::EditAction { action:_, display:_, buffer } => {
+                                                buffer.push(c);
+                                                terminal.draw(|f|render(f, &app))?;
+                                            },
+                                            page::InputState::Normal => {
+
+
+                                            },
+                                        }
+                                    }
+                                    (Backspace, Press, KeyModifiers::NONE) => {
+                                        match &mut app.state.input_state {
+                                            page::InputState::EditAction { action:_, display:_, buffer } => {
+                                                buffer.pop();
+                                                terminal.draw(|f|render(f, &app))?;
+                                            },
+                                            page::InputState::Normal => {
+
+                                            },
+                                        }
+                                    }
+                                    (Enter, Press, KeyModifiers::NONE) => {
+                                        let state= &mut app.state.input_state;
+                                        match state {
+                                            page::InputState::EditAction { action, display:_, buffer } => {
+                                                match action {
+                                                    page::Action::CreatLiveRoomPage => {
+                                                        match buffer.parse::<u64>() {
+                                                            Ok(roomid) => {
+                                                                let srv = LiveRoomService::new(roomid).await.unwrap();
+                                                                let watcher = srv.watch().await;
+                                                                tokio::spawn(srv.serve());
+                                                                app.state.regist_page(format!("直播{roomid}"), watcher);
+                                                            },
+                                                            Err(e) => {
+                                                                app.state.message(format!("{e}"))
+                                                            },
+                                                        }
+                                                    },
+                                                }
+                                            },
+                                            page::InputState::Normal => {},
+                                        }
+                                        app.state.input_state = page::InputState::Normal;
                                         terminal.draw(|f|render(f, &app))?;
                                     }
                                     _ => {

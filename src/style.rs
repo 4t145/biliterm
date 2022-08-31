@@ -11,3 +11,10 @@ pub const ERROR: Style = Style {
     add_modifier: Modifier::BOLD,
     sub_modifier: Modifier::empty()
 };
+
+pub const INV: Style = Style {
+    fg: Some(Color::Black),
+    bg: Some(Color::White),
+    add_modifier: Modifier::BOLD,
+    sub_modifier: Modifier::empty()
+};
