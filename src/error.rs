@@ -1,4 +1,8 @@
+use bilibili_client::ClientError;
+
 #[derive(Debug)]
 pub enum Error {
-    ConnectLiveRoomFail
+    ConnectLiveRoomFail,
+    WebApiClientFail(ClientError),
+    Io(std::io::Error)
 }

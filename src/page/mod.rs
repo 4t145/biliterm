@@ -7,7 +7,7 @@ pub mod liveroom;
 
 
 pub enum Page {
-    Home,
+    Home(Option<String>),
     LiveRoom(liveroom::LiveRoom)
 }
 
@@ -22,7 +22,7 @@ pub struct GlobalState {
     pub pages: Vec<(String, watch::Receiver<Page>)>,
     pub current_page: Option<usize>,
     pub messages: Vec<String>,
-    pub input_state: InputState
+    pub input_state: InputState,
 }
 
 #[derive(Clone)]
@@ -47,7 +47,7 @@ pub enum InputState {
         display: String,
         buffer: String,
     },
-    Normal,
+    Normal ,
 }
 
 impl InputState {

@@ -9,11 +9,20 @@ pub struct PageView<'v>(pub &'v Page);
 impl<'v> Widget for PageView<'v> {
     fn render(self, area: tui::layout::Rect, buf: &mut tui::buffer::Buffer) {
         match self.0 {
-            Page::Home => {
+            Page::Home(qrcode) => {
                 let block = Block::default().borders(Borders::ALL);
                 let inner = block.inner(area);
-                buf.set_string(inner.x, inner.y, "Hello Biliterm", Style::default());
                 block.render(area, buf);
+                match qrcode {
+                    Some(code) => {
+                        let p = Paragraph::new(code.as_str());
+                        p.render(inner, buf);
+                    },
+                    None => {
+                        buf.set_string(inner.x, inner.y, "Hello Biliterm", Style::default());
+                        buf.set_string(inner.x, inner.y+1, "No QrCode", Style::default());
+                    },
+                }
             }
             Page::LiveRoom(liveroom) => {
                 let block = Block::default().borders(Borders::ALL);
@@ -25,6 +34,9 @@ impl<'v> Widget for PageView<'v> {
                 for danmaku in liveroom.danmaku_buffer.iter().rev() {
                     match danmaku {
                         bilive_danmaku::event::Event::Danmaku { junk_flag:_, message, user, fans_medal:_ } => {
+                            if line == top {
+                                break;
+                            }
                             let mut user_name = Span::from(user.uname.as_str());
                             user_name.style = crate::style::INV;
                             let message = Span::from(message.to_string());
@@ -32,9 +44,6 @@ impl<'v> Widget for PageView<'v> {
                             let p = Paragraph::new(msg);
                             p.render(Rect::new(left_bound, line,  width, 1), buf);
                             line -= 1;
-                            if line == top {
-                                break;
-                            }
                         },
                         _ => {}
                     }
