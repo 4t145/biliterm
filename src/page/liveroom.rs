@@ -7,7 +7,8 @@ use tui::{widgets::{Widget, Block, Borders, Paragraph}, text::{Span, Spans}, lay
 
 #[derive(Default)]
 pub struct LiveRoomPage {
-    pub danmaku_buffer: VecDeque<bilive_danmaku::event::Event>
+    pub danmaku_buffer: VecDeque<bilive_danmaku::event::Event>,
+    pub roomid: u64,
 }
 
 impl LiveRoomPage {
@@ -26,12 +27,12 @@ impl<'a> Widget for &'a LiveRoomPage {
         let inner = block.inner(area);
         let width = inner.width;
         let top = inner.top();
-        let mut line = inner.bottom();
+        let mut line = inner.bottom()-1;
         let left_bound = inner.left()+1;
         for danmaku in self.danmaku_buffer.iter().rev() {
             match danmaku {
                 bilive_danmaku::event::Event::Danmaku { junk_flag:_, message, user, fans_medal:_ } => {
-                    if line == top {
+                    if line == top-1 {
                         break;
                     }
                     let mut user_name = Span::from(user.uname.as_str());
@@ -58,12 +59,14 @@ use bilive_danmaku::{
 use super::{PageService, PageServiceHandle};
 
 pub struct LiveRoomPageService {
+    roomid: u64,
     room_service: RoomService<Connected>
 }
 impl LiveRoomPageService {
     pub async fn new(roomid: u64) -> Result<Self, ()> {
         let service = bilive_danmaku::RoomService::new(roomid).init().await.map_err(|_|())?.connect().await.map_err(|_|())?;
         Ok(Self {
+            roomid,
             room_service: service
         })
     }
@@ -73,7 +76,8 @@ impl PageService for LiveRoomPageService {
 
     fn run(self) -> PageServiceHandle<Self::Page> {
         let mut reciever = self.room_service.subscribe();
-        let live_room_page = LiveRoomPage::default();
+        let mut live_room_page = LiveRoomPage::default();
+        live_room_page.roomid = self.roomid;
         let (tx,watcher) = watch::channel(live_room_page);
         let task = async move {
             while let Ok(e) = reciever.recv().await {

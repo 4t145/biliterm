@@ -22,7 +22,7 @@ macro_rules! psh {
                 match self {
                     $(Self::$page(h) => {
                         // <$page as PageService>::render(&*h.watcher.borrow(), app, f, area)
-                        f.render_widget(&*h.watcher.borrow() ,area)
+                        f.render_widget(&*h.watcher.borrow(), area)
                     },)*
                 }
             }
@@ -66,6 +66,7 @@ pub struct GlobalState {
 #[derive(Clone)]
 pub enum Action {
     CreatLiveRoomPage,
+    SendDanmakuToLive(u64)
 }
 
 impl Display for Action {
@@ -73,6 +74,9 @@ impl Display for Action {
         match self {
             Action::CreatLiveRoomPage => {
                 f.write_str("创建房间")
+            },
+            Action::SendDanmakuToLive(_) => {
+                f.write_str("发送弹幕")
             },
         }
     }
@@ -85,7 +89,8 @@ pub enum InputState {
         display: String,
         buffer: String,
     },
-    Normal ,
+     
+    Normal,
 }
 
 impl InputState {
@@ -106,6 +111,11 @@ impl Default for InputState {
 }
 
 impl GlobalState {
+    pub fn current_page_psh<'a>(&'a self) -> Option<&'a Psh> {
+        self.current_page.map(|idx|{
+            &self.pages[idx].1
+        })
+    }
     pub fn regist_page(&mut self, title: String, psh: Psh) {
         self.pages.push((title, psh));
         self.to_last_page();

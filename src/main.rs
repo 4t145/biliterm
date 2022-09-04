@@ -1,4 +1,5 @@
 use std::{io::{self}};
+use bilibili_client::danmaku;
 use futures::{StreamExt};
 use page::GlobalState;
 use service::webapi::{WebApiService};
@@ -96,7 +97,7 @@ fn render<B:Backend>(f: &mut Frame<B>, app: &App) {
     app.render_page(f, chunks[1]);
     match &app.state.input_state {
         page::InputState::EditAction { action, display:_, buffer } => {
-            let display = format!("[{action}]roomid:{buffer}");
+            let display = format!("[{action}]:{buffer}");
             app.render_single_line_input(f, chunks[2], display);
         },
         page::InputState::Normal => {
@@ -105,7 +106,7 @@ fn render<B:Backend>(f: &mut Frame<B>, app: &App) {
     }
 }
 
-
+#[derive(Debug)]
 pub enum Evnet {
     Tick,
     Xt(XtEvent),
@@ -183,7 +184,11 @@ async fn run<B:Backend>(app: &mut App, terminal: &mut Terminal<B>) -> Result<(),
                             }
                             (Char('l'), Press, KeyModifiers::CONTROL) => {
                                 let srv = LoginPageService::new(&webapi_service.bilibili);
-                                app.state.regist_page(format!("登录"), Psh::LoginPageService(srv.run()));
+                                let psh = Psh::LoginPageService(srv.run());
+                                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                                app.state.message(format!("psh is running"));
+                                terminal.draw(|f|render(f, &app)).map_err(Error::Io)?;
+                                app.state.regist_page(format!("登录"), psh);
                                 terminal.draw(|f|render(f, &app)).map_err(Error::Io)?;
                             }
                             (PageUp|Char(','), Press, KeyModifiers::CONTROL) => {
@@ -195,15 +200,26 @@ async fn run<B:Backend>(app: &mut App, terminal: &mut Terminal<B>) -> Result<(),
                                 terminal.draw(|f|render(f, &app)).map_err(Error::Io)?;
                             }
                             (Char(c), Press, KeyModifiers::NONE) => {
-                                match &mut app.state.input_state {
+                                let next = match &mut app.state.input_state {
                                     page::InputState::EditAction { action:_, display:_, buffer } => {
                                         buffer.push(c);
                                         terminal.draw(|f|render(f, &app)).map_err(Error::Io)?;
+                                        None
                                     },
                                     page::InputState::Normal => {
-    
+                                        if let Some(Psh::LiveRoomPageService(p)) = app.state.current_page_psh() {
+                                            if c == 't' {
+                                                let next = page::InputState::edit_action(Action::SendDanmakuToLive(p.watcher.borrow().roomid));
+                                                Some(next)
+                                            } else {
+                                                None
+                                            }
+                                        } else {
+                                            None
+                                        }
                                     },
-                                }
+                                };
+                                next.map(|s|app.state.input_state = s);
                             }
                             (Backspace, Press, KeyModifiers::NONE) => {
                                 match &mut app.state.input_state {
@@ -221,7 +237,7 @@ async fn run<B:Backend>(app: &mut App, terminal: &mut Terminal<B>) -> Result<(),
                                 match state {
                                     page::InputState::EditAction { action, display:_, buffer } => {
                                         match action {
-                                            page::Action::CreatLiveRoomPage => {
+                                            Action::CreatLiveRoomPage => {
                                                 match buffer.parse::<u64>() {
                                                     Ok(roomid) => {
                                                         let srv = LiveRoomPageService::new(roomid).await.unwrap();
@@ -231,6 +247,12 @@ async fn run<B:Backend>(app: &mut App, terminal: &mut Terminal<B>) -> Result<(),
                                                         app.state.message(format!("{e}"))
                                                     },
                                                 }
+                                            },
+                                            Action::SendDanmakuToLive(roomid) => {
+                                                webapi_service.bilibili.excute(bilibili_client::transaction::send_danmaku_to_live::SendDanmakuToLive {
+                                                    roomid: *roomid,
+                                                    danmaku: danmaku!(buffer.as_str())
+                                                });
                                             },
                                         }
                                     },

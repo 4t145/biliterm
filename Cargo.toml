@@ -25,8 +25,8 @@ git = "https://github.com/4t145/bilibili-client"
 branch = "master"
 
 [dependencies.tokio]
-version = "1.20.1"
-features = ["full"]
+version = "1.21.0"
+features = ["full", "tracing"]
 
 [dependencies.qrcode]
 version = "0.12"
@@ -37,4 +37,4 @@ futures = "0.3"
 futures-timer = "3.0"
 async-std = "1.10"
 serde_json = "1.0"
-
+# console-subscriber = "*"
