@@ -1,25 +1,63 @@
-use std::{collections::HashMap, pin::Pin, fmt::Display};
-use tokio::sync::{watch, RwLockReadGuard};
-use tui::widgets::Widget;
+use std::{fmt::Display};
+use tokio::sync::{watch};
+use tokio::task::JoinHandle;
+use tui::{widgets::Widget, Frame, backend::Backend, layout::Rect};
 
-use crate::view::PageView;
+
+
+// use crate::view::PageView;
 pub mod liveroom;
+pub mod login;
+use self::login::LoginPageService;
+use self::liveroom::LiveRoomPageService;
 
+macro_rules! psh {
+    ($($page:ident),*) => {
+        pub enum Psh {
+            $($page(PageServiceHandle<<$page as PageService>::Page>),)*
+        }
 
-pub enum Page {
-    Home(Option<String>),
-    LiveRoom(liveroom::LiveRoom)
+        impl Psh {
+            pub fn render<B:Backend>(&self, f: &mut Frame<B>, area: Rect) {
+                match self {
+                    $(Self::$page(h) => {
+                        // <$page as PageService>::render(&*h.watcher.borrow(), app, f, area)
+                        f.render_widget(&*h.watcher.borrow() ,area)
+                    },)*
+                }
+            }
+
+            pub fn abort(self) {
+                match self {
+                    $(Self::$page(h) => {
+                        // <$page as PageService>::render(&*h.watcher.borrow(), app, f, area)
+                        h.handle.abort()
+                    },)*
+                }
+            }
+        }
+    };
 }
 
-impl Page {
-    pub fn view(&self) -> PageView {
-        PageView(self)
-    }
+psh!(
+    LoginPageService,
+    LiveRoomPageService
+);
+
+pub struct PageServiceHandle<P> {
+    pub watcher: watch::Receiver<P>,
+    pub handle: JoinHandle<()>
 }
 
+pub trait PageService:Sized 
+where for <'a> &'a Self::Page: Widget
+{
+    type Page;
+    fn run(self) -> PageServiceHandle<Self::Page>;
+}
 
 pub struct GlobalState {
-    pub pages: Vec<(String, watch::Receiver<Page>)>,
+    pub pages: Vec<(String, Psh)>,
     pub current_page: Option<usize>,
     pub messages: Vec<String>,
     pub input_state: InputState,
@@ -27,7 +65,7 @@ pub struct GlobalState {
 
 #[derive(Clone)]
 pub enum Action {
-    CreatLiveRoomPage
+    CreatLiveRoomPage,
 }
 
 impl Display for Action {
@@ -68,9 +106,21 @@ impl Default for InputState {
 }
 
 impl GlobalState {
-    pub fn regist_page(&mut self, title: String, page: watch::Receiver<Page>) {
-        self.pages.push((title, page));
+    pub fn regist_page(&mut self, title: String, psh: Psh) {
+        self.pages.push((title, psh));
         self.to_last_page();
+    }
+
+    pub fn close_page(&mut self) {
+        if let Some(idx) = self.current_page {
+            let (_, psh) = self.pages.remove(idx);
+            psh.abort();
+            self.current_page = match self.pages.len() {
+                0 => None,
+                len if len==idx => Some(0),
+                _ => Some(idx)
+            }
+        }
     }
 
     pub fn message(&mut self, s:impl Into<String>) {
@@ -83,11 +133,11 @@ impl GlobalState {
         }
     }
 
-    pub fn to_first_page(&mut self) {
-        if !self.pages.is_empty() {
-            self.current_page.replace(0);
-        }
-    }
+    // pub fn to_first_page(&mut self) {
+    //     if !self.pages.is_empty() {
+    //         self.current_page.replace(0);
+    //     }
+    // }
 
     pub fn to_prev_page(&mut self) {
         let len = self.pages.len();
@@ -137,6 +187,6 @@ impl Default for GlobalState {
     }
 }
 
-pub struct GlobalService {
+// pub struct GlobalService {
 
-}
+// }

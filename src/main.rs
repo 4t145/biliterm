@@ -1,38 +1,35 @@
-use std::{io::{self}, thread, time::Duration, collections::VecDeque};
-use futures::{StreamExt, io::Read};
+use std::{io::{self}};
+use futures::{StreamExt};
 use page::GlobalState;
-use page::liveroom::LiveRoomService;
-use service::webapi::{WebApiWatcher, WebApiService};
-use tokio::sync::watch;
+use service::webapi::{WebApiService};
+
 use tui::{
     backend::{CrosstermBackend, Backend},
-    widgets::{Block, Borders, Tabs, Paragraph, ListItem, List},
-    layout::{Layout, Constraint, Direction, Rect},
-    Terminal, Frame, text::{Spans, Span, Text}, style::{Style, Color, Modifier}, symbols
+    widgets::{Block, Borders, Tabs, Paragraph},
+    layout::{Layout, Constraint, Direction, Rect, Alignment},
+    Terminal, Frame, text::{Spans,Text}, style::{Style, Color}
 };
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event as XtEvent, KeyCode},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use view::PageView;
-use crate::error::Error;
+use crate::{error::Error, page::{liveroom::LiveRoomPageService, PageService, Psh, login::{LoginPageService}}};
+
+
 mod view;
+#[allow(dead_code)]
 mod style;
 mod page;
 // mod event;
 mod error;
 mod service;
 
-enum InputMode {
-    Normal,
-    Editing,
-}
-
 /// App holds the state of the application
-struct App {
+pub struct App {
     state: GlobalState,
-    webapi_service: WebApiService<'static>,
+    #[allow(dead_code)]
+    webapi_service: WebApiService,
 }
 
 impl App {
@@ -58,14 +55,12 @@ impl App {
     fn render_page<B:Backend>(&self, f: &mut Frame<B>, area: Rect) {
         match self.state.current_page {
             Some(idx) => {
-                let (_title, page) = &self.state.pages[idx];
-                let page = page.borrow();
-                let pageview = page.view();
-                f.render_widget(pageview, area);
+                let (_, handle) = &self.state.pages[idx];
+                handle.render(f, area);
             }
             None => {
-                let qrcode = self.webapi_service.watcher.qrcode.borrow().clone();
-                f.render_widget(page::Page::Home(qrcode).view(), area);
+                // let qrcode = self.webapi_service.watcher.qrcode.borrow().clone();
+                f.render_widget(Paragraph::new("WELCOME").alignment(Alignment::Center).style(style::INFO), area);
             },
         }
     }
@@ -116,118 +111,153 @@ pub enum Evnet {
     Xt(XtEvent),
     Error
 }
+
+pub struct EventCable {
+    ticker: tokio::time::Interval,
+    oubound: tokio::sync::mpsc::UnboundedSender<Evnet>,
+}
+
+impl EventCable {
+    async fn run(self) {
+        let ob = self.oubound.clone();
+        // for xterm event
+        tokio::spawn(async move {
+            let mut reader = event::EventStream::new();
+            while let Some(Ok(e)) = reader.next().await {
+                ob.send(Evnet::Xt(e)).unwrap_or_default()
+            }
+        });
+        // for ticker
+        let ob = self.oubound.clone();
+        let mut ticker = self.ticker;
+        tokio::spawn(async move {
+            loop {
+                ticker.tick().await;
+                ob.send(Evnet::Tick).unwrap_or_default()
+            }
+        });
+    }
+}
 // 此处逻辑需要拆分
 async fn run<B:Backend>(app: &mut App, terminal: &mut Terminal<B>) -> Result<(), Error> {
-    let mut reader = event::EventStream::new();
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let cable = EventCable {
+        ticker: tokio::time::interval(tokio::time::Duration::from_millis(1000)),
+        oubound: tx
+    };
+    tokio::spawn(cable.run());
     let webapi_service = crate::service::webapi::WebApiService::new()?;
     // let mut rerender_timer = tokio::time::interval(tokio::time::Duration::from_millis(500));
-    webapi_service.spawn_login();
+    // let online = { webapi_service.bilibili.is_online() };
+    // if !online {
+    //     let oauth_key = webapi_service.fetch_qrcode().await?;
+    //     loop {
+    //         webapi_service.try_login(oauth_key)
+    //     }
+    // }
     terminal.draw(|f|render(f, &app)).map_err(Error::Io)?;
     // Racing
-    loop {
-        let event = reader.next().await;
-        terminal.draw(|f|render(f, &app)).map_err(Error::Io)?;
-        match event {
-            Some(r) => {
-                match r {
-                    Ok(e) => {
-                        match e {
-                            XtEvent::Key(key_evt) => {
-                                use KeyCode::*;
-                                use event::KeyEventKind::*;
-                                use event::KeyModifiers;
-                                use page::Action;
-                                match (key_evt.code, key_evt.kind, key_evt.modifiers) {
-                                    (Char('c'), Press, KeyModifiers::CONTROL) => {
-                                        return Ok(())
-                                    }
-                                    (Char('l'), Press, KeyModifiers::CONTROL) => {
-                                        app.state.input_state = page::InputState::edit_action(Action::CreatLiveRoomPage);
+    while let Some(e) = rx.recv().await {
+        match e {
+            Evnet::Tick => {
+                terminal.draw(|f|render(f, &app)).map_err(Error::Io)?;
+            },
+            Evnet::Xt(e) => {
+                match e {
+                    XtEvent::Key(key_evt) => {
+                        use KeyCode::*;
+                        use event::KeyEventKind::*;
+                        use event::KeyModifiers;
+                        use page::Action;
+                        match (key_evt.code, key_evt.kind, key_evt.modifiers) {
+                            (Char('c'), Press, KeyModifiers::CONTROL) => {
+                                return Ok(())
+                            }
+                            (Char('w'), Press, KeyModifiers::CONTROL) => {
+                                app.state.close_page();
+                                terminal.draw(|f|render(f, &app)).map_err(Error::Io)?;
+                            }
+                            (Char('r'), Press, KeyModifiers::CONTROL) => {
+                                app.state.input_state = page::InputState::edit_action(Action::CreatLiveRoomPage);
+                                terminal.draw(|f|render(f, &app)).map_err(Error::Io)?;
+                            }
+                            (Char('l'), Press, KeyModifiers::CONTROL) => {
+                                let srv = LoginPageService::new(&webapi_service.bilibili);
+                                app.state.regist_page(format!("登录"), Psh::LoginPageService(srv.run()));
+                                terminal.draw(|f|render(f, &app)).map_err(Error::Io)?;
+                            }
+                            (PageUp|Char(','), Press, KeyModifiers::CONTROL) => {
+                                app.state.to_next_page();
+                                terminal.draw(|f|render(f, &app)).map_err(Error::Io)?;
+                            }
+                            (PageDown|Char('.'), Press, KeyModifiers::CONTROL) => {
+                                app.state.to_prev_page();
+                                terminal.draw(|f|render(f, &app)).map_err(Error::Io)?;
+                            }
+                            (Char(c), Press, KeyModifiers::NONE) => {
+                                match &mut app.state.input_state {
+                                    page::InputState::EditAction { action:_, display:_, buffer } => {
+                                        buffer.push(c);
                                         terminal.draw(|f|render(f, &app)).map_err(Error::Io)?;
-                                    }
-                                    (PageUp|Char(','), Press, KeyModifiers::CONTROL) => {
-                                        app.state.to_next_page();
+                                    },
+                                    page::InputState::Normal => {
+    
+                                    },
+                                }
+                            }
+                            (Backspace, Press, KeyModifiers::NONE) => {
+                                match &mut app.state.input_state {
+                                    page::InputState::EditAction { action:_, display:_, buffer } => {
+                                        buffer.pop();
                                         terminal.draw(|f|render(f, &app)).map_err(Error::Io)?;
-                                    }
-                                    (PageDown|Char('.'), Press, KeyModifiers::CONTROL) => {
-                                        app.state.to_prev_page();
-                                        terminal.draw(|f|render(f, &app)).map_err(Error::Io)?;
-                                    }
-                                    (Char(c), Press, KeyModifiers::NONE) => {
-                                        match &mut app.state.input_state {
-                                            page::InputState::EditAction { action:_, display:_, buffer } => {
-                                                buffer.push(c);
-                                                terminal.draw(|f|render(f, &app)).map_err(Error::Io)?;
-                                            },
-                                            page::InputState::Normal => {
-
-                                            },
-                                        }
-                                    }
-                                    (Backspace, Press, KeyModifiers::NONE) => {
-                                        match &mut app.state.input_state {
-                                            page::InputState::EditAction { action:_, display:_, buffer } => {
-                                                buffer.pop();
-                                                terminal.draw(|f|render(f, &app)).map_err(Error::Io)?;
-                                            },
-                                            page::InputState::Normal => {
-
-                                            },
-                                        }
-                                    }
-                                    (Enter, Press, KeyModifiers::NONE) => {
-                                        let state= &mut app.state.input_state;
-                                        match state {
-                                            page::InputState::EditAction { action, display:_, buffer } => {
-                                                match action {
-                                                    page::Action::CreatLiveRoomPage => {
-                                                        match buffer.parse::<u64>() {
-                                                            Ok(roomid) => {
-                                                                let srv = LiveRoomService::new(roomid).await.unwrap();
-                                                                let watcher = srv.watch().await;
-                                                                tokio::spawn(srv.serve());
-                                                                app.state.regist_page(format!("直播{roomid}"), watcher);
-                                                            },
-                                                            Err(e) => {
-                                                                app.state.message(format!("{e}"))
-                                                            },
-                                                        }
+                                    },
+                                    page::InputState::Normal => {
+    
+                                    },
+                                }
+                            }
+                            (Enter, Press, KeyModifiers::NONE) => {
+                                let state= &mut app.state.input_state;
+                                match state {
+                                    page::InputState::EditAction { action, display:_, buffer } => {
+                                        match action {
+                                            page::Action::CreatLiveRoomPage => {
+                                                match buffer.parse::<u64>() {
+                                                    Ok(roomid) => {
+                                                        let srv = LiveRoomPageService::new(roomid).await.unwrap();
+                                                        app.state.regist_page(format!("直播{roomid}"), Psh::LiveRoomPageService(srv.run()));
+                                                    },
+                                                    Err(e) => {
+                                                        app.state.message(format!("{e}"))
                                                     },
                                                 }
                                             },
-                                            page::InputState::Normal => {},
                                         }
-                                        app.state.input_state = page::InputState::Normal;
-                                        terminal.draw(|f|render(f, &app)).map_err(Error::Io)?;
-                                    }
-                                    _ => {
-
-                                    }
+                                    },
+                                    page::InputState::Normal => {},
                                 }
-
-                            },
-                            XtEvent::Resize(_, _) => {
+                                app.state.input_state = page::InputState::Normal;
                                 terminal.draw(|f|render(f, &app)).map_err(Error::Io)?;
-                            },
-                            _ => {
-
                             }
-                            // Event::FocusGained => todo!(),
-                            // Event::FocusLost => todo!(),
-                            // Event::Mouse(_) => todo!(),
-                            // Event::Paste(_) => todo!(),
+                            _ => {
+    
+                            }
                         }
-                    },
-                    Err(_) => {
+                    }
+                    _ => {
 
-                    },
+                    }
+                    // XtEvent::FocusGained => todo!(),
+                    // XtEvent::FocusLost => todo!(),
+                    // XtEvent::Mouse(_) => todo!(),
+                    // XtEvent::Paste(_) => todo!(),
+                    // XtEvent::Resize(_, _) => todo!(),
                 }
             },
-            None => {
-
-            },
+            Evnet::Error => todo!(),
         }
     }
+    Ok(())
 }
 
 

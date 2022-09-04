@@ -1,25 +1,16 @@
 
-use std::{collections::VecDeque, sync::Arc};
+use std::{collections::VecDeque};
 
-use bilibili_client::api::live;
-use bilive_danmaku::{
-    model::DanmakuMessage,     
-};
-use tokio::sync::{watch, RwLockReadGuard};
+use tokio::sync::{watch};
+use tui::{widgets::{Widget, Block, Borders, Paragraph}, text::{Span, Spans}, layout::Rect};
 
-use crate::error::Error::*;
 
-pub struct LiveRoom {
+#[derive(Default)]
+pub struct LiveRoomPage {
     pub danmaku_buffer: VecDeque<bilive_danmaku::event::Event>
 }
 
-
-
-impl LiveRoom {
-    pub fn new() -> Self {
-        Self { danmaku_buffer: VecDeque::new() }
-    }
-
+impl LiveRoomPage {
     pub fn push_danmaku(&mut self, danmaku:bilive_danmaku::event::Event, ) {
         self.danmaku_buffer.push_back(danmaku);
         if self.danmaku_buffer.len() > 64 {
@@ -28,63 +19,76 @@ impl LiveRoom {
     }
 }
 
-pub struct LiveRoomPage {
-    
+
+impl<'a> Widget for &'a LiveRoomPage {
+    fn render(self, area: tui::layout::Rect, buf: &mut tui::buffer::Buffer) {
+        let block = Block::default().borders(Borders::ALL);
+        let inner = block.inner(area);
+        let width = inner.width;
+        let top = inner.top();
+        let mut line = inner.bottom();
+        let left_bound = inner.left()+1;
+        for danmaku in self.danmaku_buffer.iter().rev() {
+            match danmaku {
+                bilive_danmaku::event::Event::Danmaku { junk_flag:_, message, user, fans_medal:_ } => {
+                    if line == top {
+                        break;
+                    }
+                    let mut user_name = Span::from(user.uname.as_str());
+                    user_name.style = crate::style::INV;
+                    let message = Span::from(message.to_string());
+                    let msg = Spans::from(vec![user_name, message]);
+                    let p = Paragraph::new(msg);
+                    p.render(Rect::new(left_bound, line,  width, 1), buf);
+                    line -= 1;
+                },
+                _ => {}
+            }
+        }
+        block.render(area, buf);
+    }
 }
+
 
 use bilive_danmaku::{
     RoomService,
     Connected
 };
 
-use super::Page;
+use super::{PageService, PageServiceHandle};
 
-pub struct LiveRoomService {
-    sender: watch::Sender<Page>,
+pub struct LiveRoomPageService {
     room_service: RoomService<Connected>
 }
-
-
-
-
-impl LiveRoomService {
-    pub async fn new(roomid: u64) -> Result<Self, crate::error::Error> {
-        let room_service = RoomService::new(roomid).init().await
-        .map_err(|_|ConnectLiveRoomFail)?
-        .connect().await.map_err(|_|ConnectLiveRoomFail)?;
-        let liveroom = LiveRoom::new();
-        let (sender, _) = watch::channel(Page::LiveRoom(liveroom));
+impl LiveRoomPageService {
+    pub async fn new(roomid: u64) -> Result<Self, ()> {
+        let service = bilive_danmaku::RoomService::new(roomid).init().await.map_err(|_|())?.connect().await.map_err(|_|())?;
         Ok(Self {
-            room_service,
-            sender,
+            room_service: service
         })
     }
+}
+impl PageService for LiveRoomPageService {
+    type Page = LiveRoomPage;
 
-    pub async fn watch(&self) -> watch::Receiver<Page> {
-        self.sender.subscribe()
-    }
-
-    pub async fn serve(self) {
+    fn run(self) -> PageServiceHandle<Self::Page> {
         let mut reciever = self.room_service.subscribe();
-        while let Ok(e) = reciever.recv().await {
-            match e {
-                danmaku@bilive_danmaku::event::Event::Danmaku {..} => {
-                    self.sender.send_if_modified(|p|{
-                        match p {
-                            Page::LiveRoom(liveroom) => {
-                                liveroom.push_danmaku(danmaku);
-                                true
-                            },
-                            _ => false
-                        }
-                    });
-                },
-                _ => {}
+        let live_room_page = LiveRoomPage::default();
+        let (tx,watcher) = watch::channel(live_room_page);
+        let task = async move {
+            while let Ok(e) = reciever.recv().await {
+                match e {
+                    danmaku@bilive_danmaku::event::Event::Danmaku {..} => {
+                        tx.send_modify(|p|{p.push_danmaku(danmaku)});
+                    },
+                    _ => {}
+                }
             }
+        };
+        let handle = tokio::spawn(task);
+        PageServiceHandle {
+            watcher,
+            handle
         }
     }
 }
-// pub fn run() {
-//     let model = LiveRoom::new();
-//     let srv = LiveRoomService::new();
-// }

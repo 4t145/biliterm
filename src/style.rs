@@ -1,9 +1,5 @@
-use tui::{
-    backend::{CrosstermBackend, Backend},
-    widgets::{Widget, Block, Borders, Tabs, Paragraph, ListItem, List},
-    layout::{Layout, Constraint, Direction, Rect},
-    Terminal, Frame, text::{Spans, Span, Text}, style::{Style, Color, Modifier}, symbols
-};
+use tui::{style::{Style, Color, Modifier}};
+
 
 pub const CRITICAL: Style = Style {
     fg: Some(Color::White),
