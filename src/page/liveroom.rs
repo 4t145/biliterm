@@ -31,14 +31,25 @@ impl<'a> Widget for &'a LiveRoomPage {
         let left_bound = inner.left()+1;
         for danmaku in self.danmaku_buffer.iter().rev() {
             match danmaku {
-                bilive_danmaku::event::Event::Danmaku { junk_flag:_, message, user, fans_medal:_ } => {
+                bilive_danmaku::event::Event::Danmaku { junk_flag, message, user, fans_medal } => {
+                    if *junk_flag == 2 {
+                        continue;
+                    }
                     if line == top-1 {
                         break;
                     }
+                    let mut spans = Vec::with_capacity(3);
                     let mut user_name = Span::from(user.uname.as_str());
                     user_name.style = crate::style::INV;
+                    spans.push(user_name);
+                    if let Some(medal) = fans_medal {
+                        let mut medal = Span::from(format!("{}[{}]",medal.medal_name, medal.medal_level));
+                        medal.style = crate::style::MEDAL;
+                        spans.push(medal);
+                    }
                     let message = Span::from(message.to_string());
-                    let msg = Spans::from(vec![user_name, message]);
+                    spans.push(message);
+                    let msg = Spans::from(spans);
                     let p = Paragraph::new(msg);
                     p.render(Rect::new(left_bound, line,  width, 1), buf);
                     line -= 1;

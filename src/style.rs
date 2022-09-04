@@ -42,3 +42,10 @@ pub const INV: Style = Style {
     add_modifier: Modifier::BOLD,
     sub_modifier: Modifier::empty()
 };
+
+pub const MEDAL: Style = Style {
+    fg: Some(Color::White),
+    bg: Some(Color::Blue),
+    add_modifier: Modifier::empty(),
+    sub_modifier: Modifier::empty()
+};

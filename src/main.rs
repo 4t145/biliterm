@@ -191,11 +191,11 @@ async fn run<B:Backend>(app: &mut App, terminal: &mut Terminal<B>) -> Result<(),
                                 app.state.regist_page(format!("登录"), psh);
                                 terminal.draw(|f|render(f, &app)).map_err(Error::Io)?;
                             }
-                            (PageUp|Char(','), Press, KeyModifiers::CONTROL) => {
+                            (Char(',')|Tab, Press, KeyModifiers::CONTROL)|(PageDown, Press, KeyModifiers::NONE) => {
                                 app.state.to_next_page();
                                 terminal.draw(|f|render(f, &app)).map_err(Error::Io)?;
                             }
-                            (PageDown|Char('.'), Press, KeyModifiers::CONTROL) => {
+                            (Char('.'), Press, KeyModifiers::CONTROL)|(PageUp, Press, KeyModifiers::NONE) => {
                                 app.state.to_prev_page();
                                 terminal.draw(|f|render(f, &app)).map_err(Error::Io)?;
                             }
@@ -225,6 +225,17 @@ async fn run<B:Backend>(app: &mut App, terminal: &mut Terminal<B>) -> Result<(),
                                 match &mut app.state.input_state {
                                     page::InputState::EditAction { action:_, display:_, buffer } => {
                                         buffer.pop();
+                                        terminal.draw(|f|render(f, &app)).map_err(Error::Io)?;
+                                    },
+                                    page::InputState::Normal => {
+    
+                                    },
+                                }
+                            }
+                            (Esc, Press, KeyModifiers::NONE) => {
+                                match &mut app.state.input_state {
+                                    s@page::InputState::EditAction { .. } => {
+                                        *s = page::InputState::Normal;
                                         terminal.draw(|f|render(f, &app)).map_err(Error::Io)?;
                                     },
                                     page::InputState::Normal => {
@@ -269,10 +280,10 @@ async fn run<B:Backend>(app: &mut App, terminal: &mut Terminal<B>) -> Result<(),
                     _ => {
 
                     }
+                    // XtEvent::Paste(_) => todo!(),
                     // XtEvent::FocusGained => todo!(),
                     // XtEvent::FocusLost => todo!(),
                     // XtEvent::Mouse(_) => todo!(),
-                    // XtEvent::Paste(_) => todo!(),
                     // XtEvent::Resize(_, _) => todo!(),
                 }
             },
